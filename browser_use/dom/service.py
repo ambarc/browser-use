@@ -52,7 +52,7 @@ class DomService:
 		focus_element: int,
 		viewport_expansion: int,
 	) -> DOMElementNode:
-		js_code = resources.read_text('browser_use.dom', 'buildDomTree.js')
+		js_code = resources.read_text('browser_use.dom', 'buildDomTree-top.js')
 		# logger.debug(f"Executing buildDomTree.js with highlight={highlight_elements}, focus={focus_element}")
 
 		args = {
