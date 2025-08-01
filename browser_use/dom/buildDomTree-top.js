@@ -306,6 +306,14 @@
     // Helper function to check if element is the top element at its position
     function isTopElement(element) {
         const doc = element.ownerDocument;
+
+        // Special case for our target elements
+        if (element.classList.contains('pb_c_demogrpahic-drawer') || 
+            element.classList.contains('preferred-pharmacy') || 
+            element.classList.contains('care-team') || 
+            element.classList.contains('preferred-lab')) {
+            return true;
+        }
         
         // Handle iframe elements with frame-specific occlusion detection
         if (doc !== window.document) {
