@@ -98,6 +98,33 @@
     }
 
 
+    // Helper function to robustly detect shadow roots
+    function isShadowRoot(node) {
+        if (!node) return false;
+        
+        // Multiple detection methods for robustness
+        return (
+            (typeof ShadowRoot !== 'undefined' && node instanceof ShadowRoot) ||
+            (node.nodeType === 11 && node.host !== undefined) || // DOCUMENT_FRAGMENT_NODE with host
+            (node.toString && node.toString() === '[object ShadowRoot]') ||
+            (node.constructor && node.constructor.name === 'ShadowRoot')
+        );
+    }
+    
+    // Helper function to check if element is in shadow DOM
+    function isInShadowDOM(element) {
+        if (!element) return false;
+        
+        // Check if parent is shadow root
+        if (element.parentNode && isShadowRoot(element.parentNode)) {
+            return true;
+        }
+        
+        // Check if getRootNode returns shadow root
+        const rootNode = element.getRootNode();
+        return isShadowRoot(rootNode);
+    }
+
     // Helper function to generate XPath as a tree
     function getXPathTree(element, stopAtBoundary = true) {
         const segments = [];
@@ -289,10 +316,14 @@
     // Helper function to check if element is visible
     function isElementVisible(element) {
         // Special case for our target elements
-        if (element.classList.contains('pb_c_demogrpahic-drawer') || 
-            element.classList.contains('preferred-pharmacy') || 
-            element.classList.contains('care-team') || 
-            element.classList.contains('preferred-lab')) {
+        // if (element.classList.contains('pb_c_demogrpahic-drawer') || 
+        //     element.classList.contains('preferred-pharmacy') || 
+        //     element.classList.contains('care-team') || 
+        //     element.classList.contains('preferred-lab')) {
+        //     return true;
+        // }
+
+        if (isInShadowDOM(element)) {
             return true;
         }
 
@@ -308,10 +339,14 @@
         const doc = element.ownerDocument;
 
         // Special case for our target elements
-        if (element.classList.contains('pb_c_demogrpahic-drawer') || 
-            element.classList.contains('preferred-pharmacy') || 
-            element.classList.contains('care-team') || 
-            element.classList.contains('preferred-lab')) {
+        // if (element.classList.contains('pb_c_demogrpahic-drawer') || 
+        //     element.classList.contains('preferred-pharmacy') || 
+        //     element.classList.contains('care-team') || 
+        //     element.classList.contains('preferred-lab')) {
+        //     return true;
+        // }
+
+        if (isInShadowDOM(element)) {
             return true;
         }
         
@@ -362,35 +397,36 @@
 
     function isTopElementInMainDocument(element) {
         // Special case for our target elements
-        if (element.classList.contains('pb_c_demogrpahic-drawer') || 
-            element.classList.contains('preferred-pharmacy') || 
-            element.classList.contains('care-team') || 
-            element.classList.contains('preferred-lab')) {
-            return true;
-        }
+        // if (element.classList.contains('pb_c_demogrpahic-drawer') || 
+        //     element.classList.contains('preferred-pharmacy') || 
+        //     element.classList.contains('care-team') || 
+        //     element.classList.contains('preferred-lab')) {
+        //     return true;
+        // }
 
         // For shadow DOM, we need to check within its own root context
-        const shadowRoot = element.getRootNode();
-        if (shadowRoot instanceof ShadowRoot) {
-            const rect = element.getBoundingClientRect();
-            const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        // ambar - this doesn't seem to be helping or needed.
+        // const shadowRoot = element.getRootNode();
+        // if (isShadowRoot(shadowRoot)) {
+        //     const rect = element.getBoundingClientRect();
+        //     const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 
-            try {
-                // Use shadow root's elementFromPoint to check within shadow DOM context
-                const topEl = shadowRoot.elementFromPoint(point.x, point.y);
-                if (!topEl) return false;
+        //     try {
+        //         // Use shadow root's elementFromPoint to check within shadow DOM context
+        //         const topEl = shadowRoot.elementFromPoint(point.x, point.y);
+        //         if (!topEl) return false;
 
-                // Check if the element or any of its parents match our target element
-                let current = topEl;
-                while (current && current !== shadowRoot) {
-                    if (current === element) return true;
-                    current = current.parentElement;
-                }
-                return false;
-            } catch (e) {
-                return false;
-            }
-        }
+        //         // Check if the element or any of its parents match our target element
+        //         let current = topEl;
+        //         while (current && current !== shadowRoot) {
+        //             if (current === element) return true;
+        //             current = current.parentElement;
+        //         }
+        //         return false;
+        //     } catch (e) {
+        //         return false;
+        //     }
+        // }
 
         // Regular DOM elements
         const rect = element.getBoundingClientRect();
@@ -583,6 +619,16 @@
             nodeData.isVisible = isVisible;
             nodeData.isTopElement = isTop;
 
+            // if (node.shadowRoot || isShadowRoot(node.parentElement)) {
+            //     // console.log('Shadow Node in -top:', node.tagName, node.classList.toString(), 'interactive:', isInteractive, 'visible:', isVisible, 'top:', isTop);   
+            //     // console.log(node.getRootNode());
+            // }
+            // if (isShadowRoot(node.getRootNode())) {
+            //     // console.log('shadow node child in -top', node.tagName, node.classList.toString(), 'interactive:', isInteractive, 'visible:', isVisible, 'top:', isTop);   
+            //     // console.log(node.getRootNode());
+            // }
+
+            // console.log('default print', node, node.tagName, node.classList.toString(), 'interactive:', isInteractive, 'visible:', isVisible, 'top:', isTop, 'shadowRoot:', node.shadowRoot, 'parentElement:', isShadowRoot(node.parentElement), 'getRootNode:', node.getRootNode());   
             // Highlight if element meets all criteria and highlighting is enabled
             if (isInteractive && isVisible && isTop) {
                 nodeData.highlightIndex = highlightIndex++;
