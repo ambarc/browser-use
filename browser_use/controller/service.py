@@ -242,10 +242,10 @@ class Controller:
 				# logger.info(msg)
 				return ActionResult(extracted_content=msg)
 
-		@self.registry.action(
-			'Scroll down the page or a specific frame by pixel amount - if no amount is specified, scroll down one page',
-			param_model=ScrollAction,
-		)
+		# @self.registry.action(
+		# 	'Scroll down the page or a specific frame by pixel amount - if no amount is specified, scroll down one page',
+		# 	param_model=ScrollAction,
+		# )
 		async def scroll_down(params: ScrollAction, browser: BrowserContext):
 			page = await browser.get_current_page()
 			
@@ -566,10 +566,10 @@ class Controller:
 				)
 
 		# scroll up
-		@self.registry.action(
-			'Scroll up the page or a specific frame by pixel amount - if no amount is specified, scroll up one page',
-			param_model=ScrollAction,
-		)
+		# @self.registry.action(
+		# 	'Scroll up the page or a specific frame by pixel amount - if no amount is specified, scroll up one page',
+		# 	param_model=ScrollAction,
+		# )
 		async def scroll_up(params: ScrollAction, browser: BrowserContext):
 			page = await browser.get_current_page()
 			
@@ -800,9 +800,516 @@ class Controller:
 			else:
 				error = result.get('error', 'unknown error')
 				msg = f'❌ Failed to scroll: {error}'
+				logger.info(msg)
+			return ActionResult(error=msg, include_in_memory=True)
+
+		# Added by bitboard - Natural scrolling methods for testing different scroll behaviors
+		@self.registry.action(
+			'Scroll down using natural mouse wheel at page center - more human-like scrolling behavior',
+			param_model=ScrollAction,
+		)
+		async def scroll_down_natural(params: ScrollAction, browser: BrowserContext):
+			"""Natural scroll down using positioned mouse wheel at page center"""
+			page = await browser.get_current_page()
+			delta_y = params.amount if params.amount is not None else 400
+			msg = ""
+			try:
+				# Get page dimensions for mouse positioning
+				viewport = page.viewport_size
+				if viewport is None:
+					dimensions = await page.evaluate("({width: window.innerWidth, height: window.innerHeight})")
+					center_x = dimensions["width"] // 2
+					center_y = dimensions["height"] // 2
+				else:
+					center_x = viewport["width"] // 2
+					center_y = viewport["height"] // 2
+				
+				# Get initial scroll positions for both main page and any accessible iframes
+				initial_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						// Check all iframes for their scroll positions
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									const rect = iframe.getBoundingClientRect();
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0,
+										scrollHeight: frameDoc.documentElement.scrollHeight || frameDoc.body.scrollHeight,
+										clientHeight: frameWindow.innerHeight || frameDoc.documentElement.clientHeight,
+										rect: {
+											x: rect.x,
+											y: rect.y,
+											width: rect.width,
+											height: rect.height
+										}
+									});
+								}
+							} catch (e) {
+								// Cross-origin iframe
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Move mouse to center of page and perform wheel scroll
+				await page.mouse.move(center_x, center_y)
+				await asyncio.sleep(0.1)  # Small delay to ensure mouse position is registered
+				await page.mouse.wheel(0, delta_y)
+				await asyncio.sleep(0.3)  # Wait for scroll to complete
+				
+				# Get final scroll positions
+				final_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Calculate scroll differences
+				main_scrolled = final_state['mainWindow'] - initial_state['mainWindow']
+				iframe_scrolled = {}
+				total_scrolled = main_scrolled
+				
+				for i, (initial_iframe, final_iframe) in enumerate(zip(initial_state['iframes'], final_state['iframes'])):
+					if 'error' not in initial_iframe and 'error' not in final_iframe:
+						scrolled = final_iframe['scrollY'] - initial_iframe['scrollY']
+						iframe_scrolled[i] = scrolled
+						if scrolled != 0:
+							total_scrolled = scrolled  # Use iframe scroll as primary if it happened
+				
+				# Determine which element actually scrolled
+				scrolled_target = "none"
+				if main_scrolled != 0:
+					scrolled_target = "main_window"
+				for iframe_idx, scrolled in iframe_scrolled.items():
+					if scrolled != 0:
+						iframe_id = initial_state['iframes'][iframe_idx]['id']
+						scrolled_target = f"iframe_{iframe_idx}_{iframe_id}"
+						break
+				
+				msg = f'🎯 Natural scroll down: {total_scrolled}px (mouse wheel at {center_x},{center_y}) -> {scrolled_target}'
+				logger.info(msg)
+				return ActionResult(extracted_content=msg, include_in_memory=True)
+				
+			except Exception as e:
+				msg = f'❌ Natural scroll down failed: {str(e)}'
+				logger.error(msg)
+				return ActionResult(error=msg, include_in_memory=True)
+
+		# Added by bitboard - Scroll to bottom using End key
+		@self.registry.action(
+			'Scroll to bottom of page or frame using End key - instant navigation to bottom',
+			param_model=ScrollAction,
+		)
+		async def scroll_down_to_bottom(params: ScrollAction, browser: BrowserContext):
+			"""Scroll to bottom using End key with proper focus handling"""
+			page = await browser.get_current_page()
 			
-			logger.info(msg)
-			return ActionResult(extracted_content=msg, include_in_memory=True)
+			try:
+				# Get page dimensions for focus positioning
+				viewport = page.viewport_size
+				if viewport is None:
+					dimensions = await page.evaluate("({width: window.innerWidth, height: window.innerHeight})")
+					center_x = dimensions["width"] // 2
+					center_y = dimensions["height"] // 2
+				else:
+					center_x = viewport["width"] // 2
+					center_y = viewport["height"] // 2
+				
+				# Get initial scroll positions
+				initial_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0,
+										scrollHeight: frameDoc.documentElement.scrollHeight || frameDoc.body.scrollHeight,
+										clientHeight: frameWindow.innerHeight || frameDoc.documentElement.clientHeight
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Move mouse to center and click to focus, then press End key
+				await page.mouse.move(center_x, center_y)
+				await page.mouse.click(center_x, center_y)
+				await asyncio.sleep(0.2)  # Wait for focus
+				await page.keyboard.press('End')
+				await asyncio.sleep(0.5)  # Wait for scroll to complete
+				
+				# Get final scroll positions
+				final_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Calculate scroll differences and check if reached bottom
+				main_scrolled = final_state['mainWindow'] - initial_state['mainWindow']
+				iframe_scrolled = {}
+				total_scrolled = main_scrolled
+				reached_bottom = False
+				
+				for i, (initial_iframe, final_iframe) in enumerate(zip(initial_state['iframes'], final_state['iframes'])):
+					if 'error' not in initial_iframe and 'error' not in final_iframe:
+						scrolled = final_iframe['scrollY'] - initial_iframe['scrollY']
+						iframe_scrolled[i] = scrolled
+						if scrolled != 0:
+							total_scrolled = scrolled
+							# Check if iframe reached bottom
+							max_scroll = initial_iframe['scrollHeight'] - initial_iframe['clientHeight']
+							current_scroll = final_iframe['scrollY']
+							reached_bottom = current_scroll >= max_scroll - 10  # 10px tolerance
+				
+				# Check if main window reached bottom
+				if main_scrolled != 0:
+					window_info = await page.evaluate("({scrollY: window.scrollY, maxScroll: document.documentElement.scrollHeight - window.innerHeight})")
+					reached_bottom = window_info['scrollY'] >= window_info['maxScroll'] - 10
+				
+				bottom_text = " (reached bottom)" if reached_bottom else ""
+				msg = f'⬇️ Scroll to bottom: {total_scrolled}px (End key){bottom_text}'
+				logger.info(msg)
+				return ActionResult(extracted_content=msg, include_in_memory=True)
+				
+			except Exception as e:
+				msg = f'❌ Scroll to bottom failed: {str(e)}'
+				logger.error(msg)
+				return ActionResult(error=msg, include_in_memory=True)
+
+		# Added by bitboard - Natural scroll up using mouse wheel
+		@self.registry.action(
+			'Scroll up using natural mouse wheel at page center - more human-like scrolling behavior',
+			param_model=ScrollAction,
+		)
+		async def scroll_up_natural(params: ScrollAction, browser: BrowserContext):
+			"""Natural scroll up using positioned mouse wheel at page center"""
+			page = await browser.get_current_page()
+			delta_y = -(params.amount if params.amount is not None else 400)  # Negative for upward scroll
+			
+			try:
+				# Get page dimensions for mouse positioning
+				viewport = page.viewport_size
+				if viewport is None:
+					dimensions = await page.evaluate("({width: window.innerWidth, height: window.innerHeight})")
+					center_x = dimensions["width"] // 2
+					center_y = dimensions["height"] // 2
+				else:
+					center_x = viewport["width"] // 2
+					center_y = viewport["height"] // 2
+				
+				# Get initial scroll positions
+				initial_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Move mouse to center and perform wheel scroll
+				await page.mouse.move(center_x, center_y)
+				await asyncio.sleep(0.1)
+				await page.mouse.wheel(0, delta_y)  # Negative delta for upward scroll
+				await asyncio.sleep(0.3)
+				
+				# Get final scroll positions
+				final_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Calculate scroll differences (positive when scrolling up)
+				main_scrolled = initial_state['mainWindow'] - final_state['mainWindow']
+				iframe_scrolled = {}
+				total_scrolled = main_scrolled
+				
+				for i, (initial_iframe, final_iframe) in enumerate(zip(initial_state['iframes'], final_state['iframes'])):
+					if 'error' not in initial_iframe and 'error' not in final_iframe:
+						scrolled = initial_iframe['scrollY'] - final_iframe['scrollY']  # Positive when scrolling up
+						iframe_scrolled[i] = scrolled
+						if scrolled != 0:
+							total_scrolled = scrolled
+				
+				# Determine which element actually scrolled
+				scrolled_target = "none"
+				if main_scrolled != 0:
+					scrolled_target = "main_window"
+				for iframe_idx, scrolled in iframe_scrolled.items():
+					if scrolled != 0:
+						iframe_id = initial_state['iframes'][iframe_idx]['id']
+						scrolled_target = f"iframe_{iframe_idx}_{iframe_id}"
+						break
+				
+				msg = f'🎯 Natural scroll up: {total_scrolled}px (mouse wheel at {center_x},{center_y}) -> {scrolled_target}'
+				logger.info(msg)
+				return ActionResult(extracted_content=msg, include_in_memory=True)
+				
+			except Exception as e:
+				msg = f'❌ Natural scroll up failed: {str(e)}'
+				logger.error(msg)
+				return ActionResult(error=msg, include_in_memory=True)
+
+		# Added by bitboard - Scroll to top using Home key
+		@self.registry.action(
+			'Scroll to top of page or frame using Home key - instant navigation to top',
+			param_model=ScrollAction,
+		)
+		async def scroll_up_to_top(params: ScrollAction, browser: BrowserContext):
+			"""Scroll to top using Home key with proper focus handling"""
+			page = await browser.get_current_page()
+			
+			try:
+				# Get page dimensions for focus positioning
+				viewport = page.viewport_size
+				if viewport is None:
+					dimensions = await page.evaluate("({width: window.innerWidth, height: window.innerHeight})")
+					center_x = dimensions["width"] // 2
+					center_y = dimensions["height"] // 2
+				else:
+					center_x = viewport["width"] // 2
+					center_y = viewport["height"] // 2
+				
+				# Get initial scroll positions
+				initial_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Move mouse to center and click to focus, then press Home key
+				await page.mouse.move(center_x, center_y)
+				await page.mouse.click(center_x, center_y)
+				await asyncio.sleep(0.2)
+				await page.keyboard.press('Home')
+				await asyncio.sleep(0.5)
+				
+				# Get final scroll positions
+				final_state = await page.evaluate("""
+					() => {
+						const state = {
+							mainWindow: window.scrollY,
+							iframes: []
+						};
+						
+						const iframes = document.querySelectorAll('iframe, frame');
+						iframes.forEach((iframe, index) => {
+							try {
+								const frameWindow = iframe.contentWindow;
+								const frameDoc = iframe.contentDocument;
+								if (frameWindow && frameDoc) {
+									state.iframes.push({
+										index: index,
+										id: iframe.id || '',
+										scrollY: frameWindow.scrollY || frameDoc.documentElement.scrollTop || frameDoc.body.scrollTop || 0
+									});
+								}
+							} catch (e) {
+								state.iframes.push({
+									index: index,
+									id: iframe.id || '',
+									error: 'Cross-origin access denied'
+								});
+							}
+						});
+						
+						return state;
+					}
+				""")
+				
+				# Calculate scroll differences (positive when scrolling up)
+				main_scrolled = initial_state['mainWindow'] - final_state['mainWindow']
+				iframe_scrolled = {}
+				total_scrolled = main_scrolled
+				reached_top = False
+				
+				for i, (initial_iframe, final_iframe) in enumerate(zip(initial_state['iframes'], final_state['iframes'])):
+					if 'error' not in initial_iframe and 'error' not in final_iframe:
+						scrolled = initial_iframe['scrollY'] - final_iframe['scrollY']  # Positive when scrolling up
+						iframe_scrolled[i] = scrolled
+						if scrolled != 0:
+							total_scrolled = scrolled
+							# Check if iframe reached top
+							reached_top = final_iframe['scrollY'] <= 5
+				
+				# Check if main window reached top
+				if main_scrolled != 0:
+					reached_top = final_state['mainWindow'] <= 5
+				
+				top_text = " (reached top)" if reached_top else ""
+				msg = f'⬆️ Scroll to top: {total_scrolled}px (Home key){top_text}'
+				logger.info(msg)
+				return ActionResult(extracted_content=msg, include_in_memory=True)
+				
+			except Exception as e:
+				msg = f'❌ Scroll to top failed: {str(e)}'
+				logger.error(msg)
+				return ActionResult(error=msg, include_in_memory=True)
 
 		# send keys
 		@self.registry.action(
