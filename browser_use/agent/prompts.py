@@ -61,10 +61,10 @@ class SystemPrompt:
    - Elements marked with "[]Non-interactive text" are non-interactive (for context only)
 
 4. NAVIGATION & ERROR HANDLING:
-   - If no suitable elements exist, use other functions to complete the task
-   - If stuck, try alternative approaches - like going back to a previous page, new search, new tab etc.
+   - If no suitable elements exist, try scrolling to find more elements
    - Handle popups/cookies by accepting or closing them
    - Use scroll to find elements you are looking for
+   - If elements are still missing after scrolling, use the "fail" action with a clear explanation
 
 5. TASK COMPLETION:
    - Use the done action as the last action as soon as the ultimate task is complete
@@ -75,9 +75,14 @@ class SystemPrompt:
 
 6. FAILURE HANDLING:
    - Use the "fail" action when you cannot complete the task due to insurmountable obstacles
-   - Examples of when to fail: required elements are missing, page is broken, task is impossible
+   - Examples of when to fail: 
+     * Required elements are missing after scrolling to find them
+     * Page is broken or returns errors consistently
+     * Task is impossible (e.g., trying to find information that doesn't exist)
+     * The workflow cannot proceed due to missing critical elements
    - Provide a clear, specific message explaining why the task cannot be completed
-   - Do NOT use fail for temporary issues - try alternative approaches first
+   - Do NOT use fail for temporary issues like slow loading - use "wait" instead
+   - Do NOT try random alternative approaches - stick to the workflow and fail if elements are missing
 
 7. WAITING:
    - Use the "wait" action when you need to pause for dynamic content, animations, or page loads
