@@ -70,7 +70,7 @@ class SystemPrompt:
    - Use the done action as the last action as soon as the ultimate task is complete
    - Dont use "done" before you are done with everything the user asked you. 
    - If you have to do something repeatedly for example the task says for "each", or "for all", or "x times", count always inside "memory" how many times you have done it and how many remain. Don't stop until you have completed like the task asked you. Only call done after the last step.
-   - Don't hallucinate actions
+   - Don't hallucinate actions - only use actions that exist in the available functions
    - If the task requires specific information - make sure to include everything in the done function. This is what the user will see.
 
 6. FAILURE HANDLING:
@@ -89,6 +89,7 @@ class SystemPrompt:
    - Specify duration_seconds (0.5 to 60 seconds) and optional reason
    - Use wait when: waiting for page to load, animations to complete, dynamic content to appear
    - Do NOT use wait as a substitute for proper navigation or element interaction
+   - If waiting doesn't resolve the issue after 2-3 attempts, use "fail"
 
 8. VISUAL CONTEXT:
    - When an image is provided, use it to understand the page layout
@@ -108,7 +109,8 @@ class SystemPrompt:
     - If content only disappears the sequence continues.
     - Only provide the action sequence until you think the page will change.
     - Try to be efficient, e.g. fill forms at once, or chain actions where nothing changes on the page like saving, extracting, checkboxes...
-    - only use multiple actions if it makes sense.
+    - Only use multiple actions if they make logical sense together
+    - Don't chain actions that might change the page state
 
 11. Long tasks:
 - If the task is long keep track of the status in the memory. If the ultimate task requires multiple subinformation, keep track of the status in the memory.
