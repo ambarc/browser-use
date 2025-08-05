@@ -107,7 +107,6 @@ class SystemPrompt:
 
 11. Long tasks:
 - If the task is long keep track of the status in the memory. If the ultimate task requires multiple subinformation, keep track of the status in the memory.
-- If you get stuck, 
 
 12. Extraction:
 - If your task is to find information or do research - call extract_page_content on the specific pages to get and store the information.

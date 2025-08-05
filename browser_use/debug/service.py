@@ -987,6 +987,7 @@ def get_chrome_path():
 browser = Browser(
     config=BrowserConfig(
         chrome_instance_path=get_chrome_path(),
+        headless=False,
     )
 )
 app = create_debug_service(browser)
