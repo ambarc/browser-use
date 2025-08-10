@@ -4,7 +4,7 @@ from functools import wraps
 from typing import Any, Callable, Coroutine, ParamSpec, TypeVar
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.DEBUG)
 
 # Define generic type variables for return type and parameters
 R = TypeVar('R')

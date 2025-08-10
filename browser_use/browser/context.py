@@ -709,7 +709,7 @@ class BrowserContext:
 			animations='disabled',
 		)
 		end_time = time.time()
-		logger.debug(f"Screenshot took {end_time - start_time:.2f} seconds")
+		logger.info(f"Screenshot took {end_time - start_time:.2f} seconds")
 
 		screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
 
@@ -1061,7 +1061,7 @@ class BrowserContext:
 		if click_attempt_id is None:
 			click_attempt_id = f"click_{hash(element_node.xpath)}"
 		
-		logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Starting _click_element_node for xpath: {element_node.xpath}")
+		# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Starting _click_element_node for xpath: {element_node.xpath}")
 
 		try:
 			# Highlight before clicking
@@ -1081,7 +1081,7 @@ class BrowserContext:
 				"""Performs the actual click, handling both download and navigation scenarios."""
 				nonlocal click_method_attempts
 				click_method_attempts += 1
-				logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Attempting click method #{click_method_attempts}")
+				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Attempting click method #{click_method_attempts}")
 				if self.config.save_downloads_path:
 					logger.debug("Attempting download-aware click...")
 					try:
@@ -1130,9 +1130,9 @@ class BrowserContext:
 					await self._check_and_handle_navigation(page)
 
 			try:
-				logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Trying primary click method (element_handle.click)")
+				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Trying primary click method (element_handle.click)")
 				result = await perform_click(lambda: element_handle.click(timeout=1500))
-				logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Primary click method succeeded")
+				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Primary click method succeeded")
 				return result
 			except URLNotAllowedError as e:
 				raise e

@@ -1,8 +1,11 @@
 import logging
+import json
 from importlib import resources
 from typing import Optional
 
 from playwright.async_api import Page
+
+import time
 
 from browser_use.dom.history_tree_processor.view import Coordinates
 from browser_use.dom.views import (
@@ -16,7 +19,7 @@ from browser_use.dom.views import (
 )
 
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)
 
 
 class DomService:
@@ -30,7 +33,7 @@ class DomService:
 		self,
 		highlight_elements: bool = True,
 		focus_element: int = -1,
-		viewport_expansion: int = 0,
+		viewport_expansion: int = 1,
 	) -> DOMState:
 		# logger.debug(f"Getting clickable elements. highlight={highlight_elements}, focus={focus_element}")
 		element_tree = await self._build_dom_tree(highlight_elements, focus_element, viewport_expansion)
@@ -52,6 +55,7 @@ class DomService:
 		focus_element: int,
 		viewport_expansion: int,
 	) -> DOMElementNode:
+		start_time = time.time()
 		js_code = resources.read_text('browser_use.dom', 'buildDomTree-top.js')
 		# logger.debug(f"Executing buildDomTree.js with highlight={highlight_elements}, focus={focus_element}")
 
@@ -61,7 +65,10 @@ class DomService:
 			'viewportExpansion': viewport_expansion,
 		}
 
+		
 		eval_page = await self.page.evaluate(js_code, args)
+		
+		# eval_page = await self.page.evaluate(js_code, args)
 		logger.debug(f"DOM tree data received, size: {len(str(eval_page))} characters")
 		
 		html_to_dict = self._parse_node(eval_page)
@@ -70,6 +77,7 @@ class DomService:
 			logger.error("Failed to parse HTML to dictionary")
 			raise ValueError('Failed to parse HTML to dictionary')
 
+		logger.info(f"build DOM tree took {time.time() - start_time:.2f} seconds")
 		return html_to_dict
 
 	def _create_selector_map(self, element_tree: DOMElementNode) -> SelectorMap:
