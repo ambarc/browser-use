@@ -222,24 +222,27 @@ class CDPDOMTester:
                 current_url = self.page.url
                 worker_current_url = worker_tester.page.url
                 
-                if current_url and current_url != "about:blank" and not self._urls_match(worker_current_url, current_url):
-                    await worker_tester.page.goto(current_url)
-                    await worker_tester.page.wait_for_load_state('networkidle')
-                elif current_url and current_url != "about:blank":
-                    # Page is already on the correct URL, just wait for it to be ready
-                    await worker_tester.page.wait_for_load_state('networkidle')
+                # if current_url and current_url != "about:blank" and not self._urls_match(worker_current_url, current_url):
+                #     await worker_tester.page.goto(current_url)
+                #     # await worker_tester.page.wait_for_load_state('networkidle')
+                # elif current_url and current_url != "about:blank":
+                #     # Page is already on the correct URL, just wait for it to be ready
+                #     # await worker_tester.page.wait_for_load_state('networkidle')
                 
                 print(f"  Worker {worker_id}: Connected to port {worker_port}")
                 
                 # Run the tests on this worker's connection
                 for i in range(runs_per_worker):
                     # Clear highlights on worker's page
+                    print(f"  Worker {worker_id}: Clearing highlights")
                     await worker_tester._clear_highlights()
                     
                     # Measure execution time
                     start_time = time.perf_counter()
+                    print("boop")
                     
                     try:
+                        print(f"  Worker {worker_id}: Evaluating script")
                         result = await worker_tester.page.evaluate(script_code, args)
                         end_time = time.perf_counter()
                         
@@ -348,11 +351,11 @@ class CDPDOMTester:
         current_url = self.page.url
         
         # Only navigate if we're not already on the target URL
-        if not self._urls_match(current_url, url):
+        if False: #not self._urls_match(current_url, url):
             print(f"\nNavigating to: {url}")
             try:
                 await self.page.goto(url)
-                await self.page.wait_for_load_state('networkidle')
+                # await self.page.wait_for_load_state('networkidle')
                 print("✓ Page loaded")
             except Exception as e:
                 print(f"❌ Failed to load page: {e}")
@@ -361,7 +364,7 @@ class CDPDOMTester:
             print(f"\nUsing current page: {url}")
             # Still wait for page to be ready, but don't reload
             try:
-                await self.page.wait_for_load_state('networkidle')
+                # await self.page.wait_for_load_state('networkidle')
                 print("✓ Page ready")
             except Exception as e:
                 print(f"⚠ Page not fully ready: {e}")
