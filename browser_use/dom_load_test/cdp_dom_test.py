@@ -218,10 +218,15 @@ class CDPDOMTester:
                         'error': f"Failed to connect to port {worker_port}"
                     }
                 
-                # Navigate to the same URL as main connection
+                # Navigate to the same URL as main connection if different
                 current_url = self.page.url
-                if current_url and current_url != "about:blank":
+                worker_current_url = worker_tester.page.url
+                
+                if current_url and current_url != "about:blank" and worker_current_url != current_url:
                     await worker_tester.page.goto(current_url)
+                    await worker_tester.page.wait_for_load_state('networkidle')
+                elif current_url and current_url != "about:blank":
+                    # Page is already on the correct URL, just wait for it to be ready
                     await worker_tester.page.wait_for_load_state('networkidle')
                 
                 print(f"  Worker {worker_id}: Connected to port {worker_port}")
@@ -340,14 +345,26 @@ class CDPDOMTester:
             print("❌ Not connected to a page")
             return None
         
-        print(f"\nNavigating to: {url}")
-        try:
-            await self.page.goto(url)
-            await self.page.wait_for_load_state('networkidle')
-            print("✓ Page loaded")
-        except Exception as e:
-            print(f"❌ Failed to load page: {e}")
-            return None
+        current_url = self.page.url
+        
+        # Only navigate if we're not already on the target URL
+        if current_url != url:
+            print(f"\nNavigating to: {url}")
+            try:
+                await self.page.goto(url)
+                await self.page.wait_for_load_state('networkidle')
+                print("✓ Page loaded")
+            except Exception as e:
+                print(f"❌ Failed to load page: {e}")
+                return None
+        else:
+            print(f"\nUsing current page: {url}")
+            # Still wait for page to be ready, but don't reload
+            try:
+                await self.page.wait_for_load_state('networkidle')
+                print("✓ Page ready")
+            except Exception as e:
+                print(f"⚠ Page not fully ready: {e}")
         
         return await self.test_current_page(iterations, parallel_workers)
     
