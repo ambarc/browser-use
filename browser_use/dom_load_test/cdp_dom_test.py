@@ -222,7 +222,7 @@ class CDPDOMTester:
                 current_url = self.page.url
                 worker_current_url = worker_tester.page.url
                 
-                if current_url and current_url != "about:blank" and worker_current_url != current_url:
+                if current_url and current_url != "about:blank" and not self._urls_match(worker_current_url, current_url):
                     await worker_tester.page.goto(current_url)
                     await worker_tester.page.wait_for_load_state('networkidle')
                 elif current_url and current_url != "about:blank":
@@ -348,7 +348,7 @@ class CDPDOMTester:
         current_url = self.page.url
         
         # Only navigate if we're not already on the target URL
-        if current_url != url:
+        if not self._urls_match(current_url, url):
             print(f"\nNavigating to: {url}")
             try:
                 await self.page.goto(url)
@@ -550,6 +550,55 @@ class CDPDOMTester:
             
         return count
     
+    def _urls_match(self, url1, url2):
+        """Smart URL comparison that handles common variations"""
+        if not url1 or not url2:
+            return False
+            
+        # Handle None or empty strings
+        if url1 == url2:
+            return True
+            
+        try:
+            from urllib.parse import urlparse, parse_qs
+            
+            # Parse both URLs
+            parsed1 = urlparse(url1)
+            parsed2 = urlparse(url2)
+            
+            # Compare scheme (http vs https should match)
+            scheme1 = parsed1.scheme.lower()
+            scheme2 = parsed2.scheme.lower()
+            if scheme1 != scheme2:
+                # Allow http/https flexibility
+                if not ((scheme1 in ['http', 'https']) and (scheme2 in ['http', 'https'])):
+                    return False
+            
+            # Compare netloc (domain and port)
+            if parsed1.netloc.lower() != parsed2.netloc.lower():
+                return False
+            
+            # Compare path, normalizing trailing slashes
+            path1 = parsed1.path.rstrip('/') or '/'
+            path2 = parsed2.path.rstrip('/') or '/'
+            if path1 != path2:
+                return False
+            
+            # Compare query parameters (order-independent)
+            query1 = parse_qs(parsed1.query)
+            query2 = parse_qs(parsed2.query)
+            if query1 != query2:
+                return False
+            
+            # Ignore fragments (hash) as they don't affect page content
+            # Fragment differences are considered the same page
+            
+            return True
+            
+        except Exception:
+            # Fallback to simple string comparison if parsing fails
+            return url1 == url2
+
     async def cleanup(self):
         """Clean up resources"""
         if self.browser:
