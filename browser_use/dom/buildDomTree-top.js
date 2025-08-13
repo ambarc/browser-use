@@ -809,6 +809,9 @@
         return nodeData;
     }
 
+    // JSON implementation. 
+    return JSON.stringify(buildDomTree(document.body));
 
-    return buildDomTree(document.body);
+    // original implementation.
+    // return buildDomTree(document.body);
 }

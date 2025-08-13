@@ -65,10 +65,11 @@ class DomService:
 			'viewportExpansion': viewport_expansion,
 		}
 
-		
-		eval_page = await self.page.evaluate(js_code, args)
-		
+		# original implementation.
 		# eval_page = await self.page.evaluate(js_code, args)
+		
+		# json implementation.
+		eval_page = json.loads(await self.page.evaluate(js_code, args))
 		logger.debug(f"DOM tree data received, size: {len(str(eval_page))} characters")
 		
 		html_to_dict = self._parse_node(eval_page)
