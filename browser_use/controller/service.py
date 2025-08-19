@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Callable, Dict, Optional, Type
 
 from langchain_core.prompts import PromptTemplate
@@ -118,10 +119,33 @@ class Controller:
 		@self.registry.action('Click element', param_model=ClickElementAction)
 		async def click_element(params: ClickElementAction, browser: BrowserContext):
 			import time
+			click_start_time = time.time()
+			
+			logger.info(json.dumps({
+				"event": "click_element_start",
+				"element_index": params.index,
+				"timestamp": click_start_time
+			}))
+			
+			session_start = time.time()
 			session = await browser.get_session()
 			state = session.cached_state
+			session_duration = time.time() - session_start
+
+			logger.info(json.dumps({
+				"event": "click_element_session_acquired",
+				"element_index": params.index,
+				"duration_ms": round(session_duration * 1000, 1)
+			}))
 
 			if params.index not in state.selector_map:
+				total_duration = time.time() - click_start_time
+				logger.error(json.dumps({
+					"event": "click_element_error",
+					"element_index": params.index,
+					"error_type": "element_not_found",
+					"total_duration_ms": round(total_duration * 1000, 1)
+				}))
 				raise Exception(f'Element with index {params.index} does not exist - retry or use alternative actions')
 
 			element_node = state.selector_map[params.index]
@@ -136,9 +160,14 @@ class Controller:
 			if element_key in self._recent_clicks:
 				time_since_last = current_time - self._recent_clicks[element_key]
 				if time_since_last < 5.0:  # 5 seconds threshold
-					logger.warning(f"🚨 [CLICK_TRACKING] POTENTIAL DOUBLE-CLICK DETECTED!")
-					logger.warning(f"🚨 [CLICK_TRACKING] Element {params.index} was clicked {time_since_last:.2f} seconds ago")
-					logger.warning(f"🚨 [CLICK_TRACKING] Element: {element_node.tag_name} xpath='{element_node.xpath}'")
+					logger.warning(json.dumps({
+						"event": "click_element_double_click_detected",
+						"element_index": params.index,
+						"click_attempt_id": click_attempt_id,
+						"time_since_last_click_seconds": round(time_since_last, 2),
+						"element_tag": element_node.tag_name,
+						"element_xpath": element_node.xpath
+					}))
 			
 			# Record this click
 			self._recent_clicks[element_key] = current_time
@@ -147,38 +176,111 @@ class Controller:
 			cutoff_time = current_time - 10.0
 			self._recent_clicks = {k: v for k, v in self._recent_clicks.items() if v > cutoff_time}
 			
-			logger.info(f"🎯 [CLICK_TRACKING] Starting click attempt {click_attempt_id} for element index {params.index}")
-			logger.info(f"🎯 [CLICK_TRACKING] Target element: {element_node.tag_name} xpath='{element_node.xpath}'")
+			logger.info(json.dumps({
+				"event": "click_element_attempt_start",
+				"element_index": params.index,
+				"click_attempt_id": click_attempt_id,
+				"element_tag": element_node.tag_name,
+				"element_xpath": element_node.xpath,
+				"recent_clicks_count": len(self._recent_clicks)
+			}))
 
 			# if element has file uploader then dont click
+			file_check_start = time.time()
 			if await browser.is_file_uploader(element_node):
+				file_check_duration = time.time() - file_check_start
+				total_duration = time.time() - click_start_time
 				msg = f'Index {params.index} - has an element which opens file upload dialog. To upload files please use a specific function to upload files '
-				logger.info(msg)
+				
+				logger.info(json.dumps({
+					"event": "click_element_file_uploader_detected",
+					"element_index": params.index,
+					"file_check_duration_ms": round(file_check_duration * 1000, 1),
+					"total_duration_ms": round(total_duration * 1000, 1),
+					"message": msg
+				}))
 				return ActionResult(extracted_content=msg, include_in_memory=True)
+			
+			file_check_duration = time.time() - file_check_start
+			logger.info(json.dumps({
+				"event": "click_element_file_check_complete",
+				"element_index": params.index,
+				"duration_ms": round(file_check_duration * 1000, 1),
+				"is_file_uploader": False
+			}))
 
 			msg = None
 
 			try:
 				# Pass the click_attempt_id to track attempts
+				click_execution_start = time.time()
 				download_path = await browser._click_element_node(element_node, click_attempt_id=click_attempt_id)
+				click_execution_duration = time.time() - click_execution_start
+				
 				if download_path:
 					msg = f'💾  Downloaded file to {download_path}'
+					logger.info(json.dumps({
+						"event": "click_element_download_triggered",
+						"element_index": params.index,
+						"click_attempt_id": click_attempt_id,
+						"download_path": download_path,
+						"click_duration_ms": round(click_execution_duration * 1000, 1)
+					}))
 				else:
-					msg = f'🖱️  Clicked button with index {params.index}: {element_node.get_all_text_till_next_clickable_element(max_depth=2)}'
+					element_text = element_node.get_all_text_till_next_clickable_element(max_depth=2)
+					msg = f'🖱️  Clicked button with index {params.index}: {element_text}'
+					logger.info(json.dumps({
+						"event": "click_element_standard_click",
+						"element_index": params.index,
+						"click_attempt_id": click_attempt_id,
+						"element_text": element_text,
+						"click_duration_ms": round(click_execution_duration * 1000, 1)
+					}))
 
-				logger.info(msg)
-				# logger.debug(f'Element xpath: {element_node.xpath}')
+				# Check for new tab
 				if len(session.context.pages) > initial_pages:
 					new_tab_msg = 'New tab opened - switching to it'
 					msg += f' - {new_tab_msg}'
-					logger.info(new_tab_msg)
+					
+					tab_switch_start = time.time()
 					await browser.switch_to_tab(-1)
+					tab_switch_duration = time.time() - tab_switch_start
+					
+					logger.info(json.dumps({
+						"event": "click_element_new_tab_opened",
+						"element_index": params.index,
+						"click_attempt_id": click_attempt_id,
+						"new_tabs_count": len(session.context.pages) - initial_pages,
+						"tab_switch_duration_ms": round(tab_switch_duration * 1000, 1)
+					}))
 				
-				logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Click completed successfully")
+				total_duration = time.time() - click_start_time
+				logger.info(json.dumps({
+					"event": "click_element_success",
+					"element_index": params.index,
+					"click_attempt_id": click_attempt_id,
+					"total_duration_ms": round(total_duration * 1000, 1),
+					"timing_breakdown": {
+						"session_ms": round(session_duration * 1000, 1),
+						"file_check_ms": round(file_check_duration * 1000, 1),
+						"click_execution_ms": round(click_execution_duration * 1000, 1)
+					}
+				}))
 				return ActionResult(extracted_content=msg, include_in_memory=True)
 			except Exception as e:
-				logger.error(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Click failed with error: {str(e)}")
-				logger.warning(f'Element not clickable with index {params.index} - most likely the page changed')
+				total_duration = time.time() - click_start_time
+				logger.error(json.dumps({
+					"event": "click_element_failed",
+					"element_index": params.index,
+					"click_attempt_id": click_attempt_id,
+					"error": str(e),
+					"total_duration_ms": round(total_duration * 1000, 1)
+				}))
+				logger.warning(json.dumps({
+					"event": "click_element_not_clickable",
+					"element_index": params.index,
+					"message": "Element not clickable - most likely the page changed"
+				}))
 				return ActionResult(error=str(e))
 
 		@self.registry.action(
@@ -1554,21 +1656,58 @@ class Controller:
 		sensitive_data: Optional[Dict[str, str]] = None,
 	) -> list[ActionResult]:
 		"""Execute multiple actions"""
+		# Initialize timing variables
+		multi_act_start_time = time.time()
+		session_setup_duration = 0
+		remove_highlights_duration = 0
+		individual_action_durations = []
+		get_state_durations = []
+		
+		logger.info(json.dumps({
+			"event": "multi_act_start",
+			"action_count": len(actions),
+			"timestamp": multi_act_start_time
+		}))
+		
 		results = []
 
+		session_start = time.time()
 		session = await browser_context.get_session()
 		cached_selector_map = session.cached_state.selector_map
 		cached_path_hashes = set(e.hash.branch_path_hash for e in cached_selector_map.values())
+		session_setup_duration = time.time() - session_start
+		
+		logger.info(json.dumps({
+			"event": "session_setup_complete",
+			"duration_ms": round(session_setup_duration * 1000, 1)
+		}))
 
 		check_break_if_paused()
 
+		remove_highlights_start = time.time()
 		await browser_context.remove_highlights()
+		remove_highlights_duration = time.time() - remove_highlights_start
+		
+		logger.info(json.dumps({
+			"event": "remove_highlights_complete",
+			"duration_ms": round(remove_highlights_duration * 1000, 1)
+		}))
 
 		for i, action in enumerate(actions):
 			check_break_if_paused()
 
 			if action.get_index() is not None and i != 0:
+				get_state_start = time.time()
 				new_state = await browser_context.get_state()
+				get_state_duration = time.time() - get_state_start
+				get_state_durations.append(get_state_duration)
+				
+				logger.info(json.dumps({
+					"event": "get_state_for_element_check",
+					"action_index": i,
+					"duration_ms": round(get_state_duration * 1000, 1)
+				}))
+				
 				new_path_hashes = set(e.hash.branch_path_hash for e in new_state.selector_map.values())
 				if check_for_new_elements and not new_path_hashes.issubset(cached_path_hashes):
 					# next action requires index but there are new elements on the page
@@ -1577,14 +1716,58 @@ class Controller:
 
 			check_break_if_paused()
 
+			action_start = time.time()
 			results.append(await self.act(action, browser_context, page_extraction_llm, sensitive_data))
+			action_duration = time.time() - action_start
+			individual_action_durations.append(action_duration)
 
-			logger.debug(f'Executed action {i + 1} / {len(actions)}')
+			# Extract actual action name from the action model
+			action_name = None
+			for name, params in action.model_dump(exclude_unset=True).items():
+				if params is not None:
+					action_name = name
+					break
+			
+			logger.info(json.dumps({
+				"event": "individual_action_complete",
+				"action_index": i,
+				"action_name": action_name or "unknown",
+				"action_type": type(action).__name__,
+				"duration_ms": round(action_duration * 1000, 1),
+				"is_done": results[-1].is_done,
+				"has_error": bool(results[-1].error)
+			}))
+			
 			if results[-1].is_done or results[-1].error or i == len(actions) - 1:
 				break
 
 			await asyncio.sleep(browser_context.config.wait_between_actions)
 			# hash all elements. if it is a subset of cached_state its fine - else break (new elements on page)
+
+		# Calculate comprehensive timing summary
+		total_multi_act_duration = time.time() - multi_act_start_time
+		total_action_time = sum(individual_action_durations)
+		total_get_state_time = sum(get_state_durations)
+		overhead_time = total_multi_act_duration - session_setup_duration - remove_highlights_duration - total_action_time - total_get_state_time
+		
+		logger.info(json.dumps({
+			"event": "multi_act_complete",
+			"timing": {
+				"total_ms": round(total_multi_act_duration * 1000, 1),
+				"session_setup_ms": round(session_setup_duration * 1000, 1),
+				"remove_highlights_ms": round(remove_highlights_duration * 1000, 1),
+				"total_actions_ms": round(total_action_time * 1000, 1),
+				"total_get_state_ms": round(total_get_state_time * 1000, 1),
+				"overhead_ms": round(overhead_time * 1000, 1)
+			},
+			"actions_executed": len(individual_action_durations),
+			"actions_planned": len(actions),
+			"success_count": len([r for r in results if not r.error and not r.is_done]),
+			"done_count": len([r for r in results if r.is_done]),
+			"error_count": len([r for r in results if r.error]),
+			"get_state_calls": len(get_state_durations),
+			"action_durations_ms": [round(d * 1000, 1) for d in individual_action_durations]
+		}))
 
 		return results
 
@@ -1600,7 +1783,6 @@ class Controller:
 		try:
 			for action_name, params in action.model_dump(exclude_unset=True).items():
 				if params is not None:
-					logger.debug(f"WILL EXECUTE ACTION: {action_name}")
 					result = await self.registry.execute_action(
 						action_name,
 						params,

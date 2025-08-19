@@ -329,13 +329,36 @@ class Agent:
 	@time_execution_async('--step')
 	async def step(self, step_info: Optional[AgentStepInfo] = None) -> None:
 		"""Execute one step of the task"""
-		logger.info(f'📍 Step {self.n_steps}')
+		# Initialize timing variables
+		step_start_time = time.time()
+		get_state_start = None
+		get_state_duration = 0
+		llm_call_start = None
+		llm_call_duration = 0
+		actions_start = None
+		actions_duration = 0
+		
+		logger.info(json.dumps({
+			"event": "step_start",
+			"step": self.n_steps,
+			"agent_id": self.agent_id,
+			"timestamp": step_start_time
+		}))
 		state = None
 		model_output = None
 		result: list[ActionResult] = []
 
 		try:
+			get_state_start = time.time()
 			state = await self.browser_context.get_state()
+			get_state_duration = time.time() - get_state_start
+			logger.info(json.dumps({
+				"event": "get_state_complete",
+				"step": self.n_steps,
+				"agent_id": self.agent_id,
+				"duration_ms": round(get_state_duration * 1000, 1),
+				"cumulative_ms": round(get_state_duration * 1000, 1)
+			}))
 
 			self._check_if_stopped_or_paused()
 
@@ -348,7 +371,17 @@ class Agent:
 			try:
 				# ambar - this is one interaction with the LLM.
 				# logger.debug(f"INPUT MESSAGES: {input_messages}")
+				llm_call_start = time.time()
 				model_output = await self.get_next_action(input_messages)
+				llm_call_duration = time.time() - llm_call_start
+				cumulative_time = get_state_duration + llm_call_duration
+				logger.info(json.dumps({
+					"event": "llm_call_complete",
+					"step": self.n_steps,
+					"agent_id": self.agent_id,
+					"duration_ms": round(llm_call_duration * 1000, 1),
+					"cumulative_ms": round(cumulative_time * 1000, 1)
+				}))
 
 				if self.register_new_step_callback:
 					self.register_new_step_callback(state, model_output, self.n_steps)
@@ -367,6 +400,8 @@ class Agent:
 				self.message_manager._remove_last_state_message()
 				raise e
 
+			# ambar - could time each action.
+			actions_start = time.time()
 			result: list[ActionResult] = await self.controller.multi_act(
 				model_output.action,
 				self.browser_context,
@@ -374,6 +409,16 @@ class Agent:
 				sensitive_data=self.sensitive_data,
 				check_break_if_paused=lambda: self._check_if_stopped_or_paused(),
 			)
+			actions_duration = time.time() - actions_start
+			cumulative_time = get_state_duration + llm_call_duration + actions_duration
+			logger.info(json.dumps({
+				"event": "actions_complete",
+				"step": self.n_steps,
+				"agent_id": self.agent_id,
+				"duration_ms": round(actions_duration * 1000, 1),
+				"cumulative_ms": round(cumulative_time * 1000, 1),
+				"action_count": len(model_output.action) if model_output else 0
+			}))
 			self._last_result = result
 
 			if len(result) > 0 and result[-1].is_done:
@@ -394,6 +439,26 @@ class Agent:
 			self._last_result = result
 
 		finally:
+			# Calculate total step duration and log comprehensive timing summary
+			total_step_duration = time.time() - step_start_time
+			overhead_duration = total_step_duration - get_state_duration - llm_call_duration - actions_duration
+			logger.info(json.dumps({
+				"event": "step_complete",
+				"step": self.n_steps,
+				"agent_id": self.agent_id,
+				"timing": {
+					"total_ms": round(total_step_duration * 1000, 1),
+					"get_state_ms": round(get_state_duration * 1000, 1),
+					"llm_call_ms": round(llm_call_duration * 1000, 1),
+					"actions_ms": round(actions_duration * 1000, 1),
+					"overhead_ms": round(overhead_duration * 1000, 1)
+				},
+				"success": len([r for r in result if not r.error]) > 0 if result else False,
+				"error_count": len([r for r in result if r.error]) if result else 0,
+				"action_count": len(model_output.action) if model_output else 0,
+				"consecutive_failures": self.consecutive_failures
+			}))
+			
 			actions = [a.model_dump(exclude_unset=True) for a in model_output.action] if model_output else []
 			self.telemetry.capture(
 				AgentStepTelemetryEvent(

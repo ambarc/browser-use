@@ -78,7 +78,13 @@ class DomService:
 			logger.error("Failed to parse HTML to dictionary")
 			raise ValueError('Failed to parse HTML to dictionary')
 
-		logger.info(f"build DOM tree took {time.time() - start_time:.2f} seconds")
+		build_duration = time.time() - start_time
+		logger.info(json.dumps({
+			"event": "build_dom_tree_complete",
+			"duration_seconds": round(build_duration, 2),
+			"duration_ms": round(build_duration * 1000, 1),
+			"data_size_chars": len(str(eval_page))
+		}))
 		return html_to_dict
 
 	def _create_selector_map(self, element_tree: DOMElementNode) -> SelectorMap:

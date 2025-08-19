@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 	from browser_use.browser.browser import Browser
 
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)
 
 
 class BrowserContextWindowSize(TypedDict):
@@ -492,15 +492,38 @@ class BrowserContext:
 		"""
 		# Start timing
 		start_time = time.time()
+		logger.info(json.dumps({
+			"event": "wait_for_page_and_frames_load_start",
+			"timestamp": start_time,
+			"timeout_overwrite": timeout_overwrite
+		}))
 
 		# Wait for page load
+		network_start = time.time()
 		try:
 			await self._wait_for_stable_network()
+			network_duration = time.time() - network_start
+			logger.info(json.dumps({
+				"event": "wait_for_stable_network_complete",
+				"duration_ms": round(network_duration * 1000, 1)
+			}))
 
 			# Check if the loaded URL is allowed
+			navigation_start = time.time()
 			page = await self.get_current_page()
 			await self._check_and_handle_navigation(page)
+			navigation_duration = time.time() - navigation_start
+			logger.info(json.dumps({
+				"event": "check_and_handle_navigation_complete",
+				"duration_ms": round(navigation_duration * 1000, 1)
+			}))
 		except URLNotAllowedError as e:
+			total_duration = time.time() - start_time
+			logger.info(json.dumps({
+				"event": "wait_for_page_and_frames_load_error",
+				"error_type": "URLNotAllowedError",
+				"duration_ms": round(total_duration * 1000, 1)
+			}))
 			raise e
 		except Exception:
 			logger.warning('Page load failed, continuing...')
@@ -510,11 +533,27 @@ class BrowserContext:
 		elapsed = time.time() - start_time
 		remaining = max((timeout_overwrite or self.config.minimum_wait_page_load_time) - elapsed, 0)
 
-		# logger.debug(f'--Page loaded in {elapsed:.2f} seconds, waiting for additional {remaining:.2f} seconds')
+		logger.info(json.dumps({
+			"event": "wait_for_page_and_frames_load_timing",
+			"elapsed_ms": round(elapsed * 1000, 1),
+			"remaining_ms": round(remaining * 1000, 1)
+		}))
 
 		# Sleep remaining time if needed
 		if remaining > 0:
+			sleep_start = time.time()
 			await asyncio.sleep(remaining)
+			sleep_duration = time.time() - sleep_start
+			logger.info(json.dumps({
+				"event": "additional_wait_complete",
+				"duration_ms": round(sleep_duration * 1000, 1)
+			}))
+
+		total_duration = time.time() - start_time
+		logger.info(json.dumps({
+			"event": "wait_for_page_and_frames_load_complete",
+			"total_duration_ms": round(total_duration * 1000, 1)
+		}))
 
 	def _is_url_allowed(self, url: str) -> bool:
 		"""Check if a URL is allowed based on the whitelist configuration."""
@@ -610,84 +649,259 @@ class BrowserContext:
 	@time_execution_sync('--get_state')  # This decorator might need to be updated to handle async
 	async def get_state(self) -> BrowserState:
 		"""Get the current state of the browser"""
+		get_state_start = time.time()
+		logger.info(json.dumps({
+			"event": "get_state_start",
+			"timestamp": get_state_start
+		}))
+
+		# Wait for page and frames to load
+		page_load_start = time.time()
 		await self._wait_for_page_and_frames_load()
+		page_load_duration = time.time() - page_load_start
+		logger.info(json.dumps({
+			"event": "get_state_page_load_complete",
+			"duration_ms": round(page_load_duration * 1000, 1)
+		}))
+
+		# Get session
+		session_start = time.time()
 		session = await self.get_session()
+		session_duration = time.time() - session_start
+		logger.info(json.dumps({
+			"event": "get_state_session_complete",
+			"duration_ms": round(session_duration * 1000, 1)
+		}))
+
+		# Update state
+		update_state_start = time.time()
 		session.cached_state = await self._update_state()
+		update_state_duration = time.time() - update_state_start
+		logger.info(json.dumps({
+			"event": "get_state_update_state_complete",
+			"duration_ms": round(update_state_duration * 1000, 1)
+		}))
 
 		# Save cookies if a file is specified
 		if self.config.cookies_file:
+			cookies_start = time.time()
 			asyncio.create_task(self.save_cookies())
+			cookies_duration = time.time() - cookies_start
+			logger.info(json.dumps({
+				"event": "get_state_save_cookies_initiated",
+				"duration_ms": round(cookies_duration * 1000, 1)
+			}))
+
+		total_duration = time.time() - get_state_start
+		logger.info(json.dumps({
+			"event": "get_state_complete",
+			"total_duration_ms": round(total_duration * 1000, 1),
+			"timing_breakdown": {
+				"page_load_ms": round(page_load_duration * 1000, 1),
+				"session_ms": round(session_duration * 1000, 1),
+				"update_state_ms": round(update_state_duration * 1000, 1)
+			}
+		}))
 
 		return session.cached_state
 
 	async def _update_state(self, focus_element: int = -1) -> BrowserState:
 		"""Update and return state."""
+		update_state_start = time.time()
+		
+		logger.info(json.dumps({
+			"event": "_update_state_start",
+			"focus_element": focus_element,
+			"timestamp": update_state_start
+		}))
+		
+		session_start = time.time()
 		session = await self.get_session()
+		session_duration = time.time() - session_start
+		
+		logger.info(json.dumps({
+			"event": "_update_state_session_acquired",
+			"duration_ms": round(session_duration * 1000, 1)
+		}))
 
 		try:
+			page_access_start = time.time()
 			page = await self.get_current_page()
-			# logger.debug("Starting page accessibility check...")
+			page_access_duration = time.time() - page_access_start
+			
 			# Test if page is still accessible
+			page_eval_start = time.time()
 			await page.evaluate('1')
-			# logger.debug("Page is accessible")
+			page_eval_duration = time.time() - page_eval_start
+			
+			logger.info(json.dumps({
+				"event": "_update_state_page_accessible",
+				"page_access_ms": round(page_access_duration * 1000, 1),
+				"page_eval_ms": round(page_eval_duration * 1000, 1)
+			}))
 		except Exception as e:
-			# logger.debug(f'Current page is no longer accessible: {str(e)}')
+			page_recovery_start = time.time()
 			# Get all available pages
 			pages = session.context.pages
 			if pages:
 				session.current_page = pages[-1]
 				page = session.current_page
-				logger.debug(f'Switched to page: {await page.title()}')
+				page_title = await page.title()
+				page_recovery_duration = time.time() - page_recovery_start
+				
+				logger.info(json.dumps({
+					"event": "_update_state_page_recovered",
+					"error": str(e),
+					"new_page_title": page_title,
+					"available_pages": len(pages),
+					"recovery_duration_ms": round(page_recovery_duration * 1000, 1)
+				}))
 			else:
+				page_recovery_duration = time.time() - page_recovery_start
+				total_duration = time.time() - update_state_start
+				logger.error(json.dumps({
+					"event": "_update_state_no_pages_available",
+					"error": str(e),
+					"recovery_duration_ms": round(page_recovery_duration * 1000, 1),
+					"total_duration_ms": round(total_duration * 1000, 1)
+				}))
 				raise BrowserError('Browser closed: no valid pages available')
 
 		try:
-			# logger.debug("Starting state update process...")
-			logger.debug(f"Current URL: {page.url}")
+			logger.info(json.dumps({
+				"event": "_update_state_processing_start",
+				"current_url": page.url,
+				"focus_element": focus_element,
+				"viewport_expansion": self.config.viewport_expansion,
+				"highlight_elements": self.config.highlight_elements
+			}))
 			
-			# logger.debug("Removing highlights...")
+			# Remove highlights
+			remove_highlights_start = time.time()
 			await self.remove_highlights()
+			remove_highlights_duration = time.time() - remove_highlights_start
 			
-			logger.debug("Initializing DOM service...")
+			logger.info(json.dumps({
+				"event": "_update_state_remove_highlights_complete",
+				"duration_ms": round(remove_highlights_duration * 1000, 1)
+			}))
+			
+			# Initialize DOM service
+			dom_service_start = time.time()
 			dom_service = DomService(page)
+			dom_service_init_duration = time.time() - dom_service_start
 			
-			# logger.debug(f"Getting clickable elements (focus_element={focus_element}, viewport_expansion={self.config.viewport_expansion})")
+			logger.info(json.dumps({
+				"event": "_update_state_dom_service_initialized",
+				"duration_ms": round(dom_service_init_duration * 1000, 1)
+			}))
+			
+			# Get clickable elements
+			clickable_elements_start = time.time()
 			content = await dom_service.get_clickable_elements(
 				focus_element=focus_element,
 				viewport_expansion=self.config.viewport_expansion,
 				highlight_elements=self.config.highlight_elements,
 			)
-			logger.debug(f"Found {len(content.selector_map)} clickable elements")
-
-			# logger.debug("Taking screenshot...")
-			screenshot_b64 = await self.take_screenshot()
+			clickable_elements_duration = time.time() - clickable_elements_start
 			
-			# logger.debug("Getting scroll info...")
+			logger.info(json.dumps({
+				"event": "_update_state_clickable_elements_complete",
+				"duration_ms": round(clickable_elements_duration * 1000, 1),
+				"element_count": len(content.selector_map),
+				"has_element_tree": content.element_tree is not None
+			}))
+
+			# Take screenshot
+			screenshot_start = time.time()
+			screenshot_b64 = await self.take_screenshot()
+			screenshot_duration = time.time() - screenshot_start
+			
+			logger.info(json.dumps({
+				"event": "_update_state_screenshot_complete",
+				"duration_ms": round(screenshot_duration * 1000, 1),
+				"screenshot_size_chars": len(screenshot_b64) if screenshot_b64 else 0
+			}))
+			
+			# Get scroll info
+			scroll_info_start = time.time()
 			pixels_above, pixels_below = await self.get_scroll_info(page)
-			# logger.debug(f"Scroll position: {pixels_above}px above, {pixels_below}px below")
+			scroll_info_duration = time.time() - scroll_info_start
+			
+			logger.info(json.dumps({
+				"event": "_update_state_scroll_info_complete",
+				"duration_ms": round(scroll_info_duration * 1000, 1),
+				"pixels_above": pixels_above,
+				"pixels_below": pixels_below
+			}))
 
-			# logger.debug("Getting tabs info...")
+			# Get tabs info
+			tabs_info_start = time.time()
 			tabs = await self.get_tabs_info()
-			# logger.debug(f"Found {len(tabs)} tabs")
+			tabs_info_duration = time.time() - tabs_info_start
+			
+			logger.info(json.dumps({
+				"event": "_update_state_tabs_info_complete",
+				"duration_ms": round(tabs_info_duration * 1000, 1),
+				"tab_count": len(tabs)
+			}))
 
-			# logger.debug("Creating browser state...")
+			# Create browser state
+			state_creation_start = time.time()
+			page_title = await page.title()
+			state_creation_title_duration = time.time() - state_creation_start
+			
 			self.current_state = BrowserState(
 				element_tree=content.element_tree,
 				selector_map=content.selector_map,
 				url=page.url,
-				title=await page.title(),
+				title=page_title,
 				tabs=tabs,
 				screenshot=screenshot_b64,
 				pixels_above=pixels_above,
 				pixels_below=pixels_below,
 			)
-			# logger.debug("State update completed successfully")
+			state_creation_duration = time.time() - state_creation_start
+			
+			total_duration = time.time() - update_state_start
+			logger.info(json.dumps({
+				"event": "_update_state_complete",
+				"total_duration_ms": round(total_duration * 1000, 1),
+				"timing_breakdown": {
+					"session_ms": round(session_duration * 1000, 1),
+					"remove_highlights_ms": round(remove_highlights_duration * 1000, 1),
+					"dom_service_init_ms": round(dom_service_init_duration * 1000, 1),
+					"clickable_elements_ms": round(clickable_elements_duration * 1000, 1),
+					"screenshot_ms": round(screenshot_duration * 1000, 1),
+					"scroll_info_ms": round(scroll_info_duration * 1000, 1),
+					"tabs_info_ms": round(tabs_info_duration * 1000, 1),
+					"state_creation_ms": round(state_creation_duration * 1000, 1)
+				},
+				"state_stats": {
+					"element_count": len(content.selector_map),
+					"tab_count": len(tabs),
+					"url": page.url,
+					"title": page_title
+				}
+			}))
 
 			return self.current_state
 		except Exception as e:
-			# logger.error(f'Failed to update state: {str(e)}')
+			total_duration = time.time() - update_state_start
+			logger.error(json.dumps({
+				"event": "_update_state_failed",
+				"error": str(e),
+				"total_duration_ms": round(total_duration * 1000, 1),
+				"has_fallback_state": hasattr(self, 'current_state')
+			}))
+			
 			# Return last known good state if available
 			if hasattr(self, 'current_state'):
+				logger.info(json.dumps({
+					"event": "_update_state_fallback_used",
+					"fallback_url": getattr(self.current_state, 'url', 'unknown'),
+					"fallback_element_count": len(getattr(self.current_state, 'selector_map', {}))
+				}))
 				return self.current_state
 			raise
 
@@ -975,20 +1189,20 @@ class BrowserContext:
 		
 		# First traverse through frames
 		for frame in element.frame_hierarchy:
-			logger.debug(f"\nProcessing frame: {frame.tag_name}")
-			logger.debug(f"Frame attributes: {frame.attributes}")
+			# logger.debug(f"\nProcessing frame: {frame.tag_name}")
+			# logger.debug(f"Frame attributes: {frame.attributes}")
 			
 			# Use ID if available (most reliable)
 			if frame.attributes.get('id'):
 				frame_id = frame.attributes['id']
-				logger.debug(f"Using frame ID selector: #{frame_id}")
+				# logger.debug(f"Using frame ID selector: #{frame_id}")
 				current_context = current_context.frame_locator(f"#{frame_id}")
 			else:
 				# Fallback to basic frame selector
-				logger.debug(f"Using basic frame selector: {frame.tag_name}")
+				# logger.debug(f"Using basic frame selector: {frame.tag_name}")
 				current_context = current_context.frame_locator(frame.tag_name)
 				
-			logger.debug(f"Frame context updated: {current_context}")
+			# logger.debug(f"Frame context updated: {current_context}")
 		
 		# Now find element in final frame context using a more specific selector
 		try:
@@ -999,7 +1213,7 @@ class BrowserContext:
 					element_handle = await current_context.locator(
 						f"[browser-user-highlight-id='playwright-highlight-{element.highlight_index}']"
 					).element_handle(timeout=2500)
-					logger.debug(f"Found element by highlight ID: {element_handle}")
+					# logger.debug(f"Found element by highlight ID: {element_handle}")
 					return element_handle
 				except Exception as e:
 					logger.debug(f"Highlight ID location failed: {e}, trying other methods...")
@@ -1038,7 +1252,19 @@ class BrowserContext:
 		try:
 			# Highlight before typing
 			if element_node.highlight_index is not None:
+				highlight_start = time.time()
+				logger.info(json.dumps({
+					"event": "_input_text_element_node_highlight_start",
+					"highlight_index": element_node.highlight_index
+				}))
 				await self._update_state(focus_element=element_node.highlight_index)
+				highlight_duration = time.time() - highlight_start
+				
+				logger.info(json.dumps({
+					"event": "_input_text_element_node_highlight_complete",
+					"highlight_index": element_node.highlight_index,
+					"duration_ms": round(highlight_duration * 1000, 1)
+				}))
 
 			page = await self.get_current_page()
 			element_handle = await self.get_locate_element(element_node)
@@ -1055,24 +1281,68 @@ class BrowserContext:
 			raise Exception(f'Failed to input text into element: {repr(element_node)}. Error: {str(e)}')
 
 	async def _click_element_node(self, element_node: DOMElementNode, click_attempt_id: str = None) -> Optional[str]:
+		click_node_start = time.time()
+		
+		page_start = time.time()
 		page = await self.get_current_page()
+		page_duration = time.time() - page_start
 
 		# Initialize click attempt tracking
 		if click_attempt_id is None:
 			click_attempt_id = f"click_{hash(element_node.xpath)}"
 		
-		# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Starting _click_element_node for xpath: {element_node.xpath}")
+		logger.info(json.dumps({
+			"event": "_click_element_node_start",
+			"click_attempt_id": click_attempt_id,
+			"element_xpath": element_node.xpath,
+			"element_tag": element_node.tag_name,
+			"highlight_index": element_node.highlight_index,
+			"get_page_duration_ms": round(page_duration * 1000, 1),
+			"total_duration_ms": round(page_duration * 1000, 1)
+		}))
 
 		try:
 			# Highlight before clicking
+			# ambar - this is adding several seconds to click time.
 			if element_node.highlight_index is not None:
+				highlight_start = time.time()
+				logger.info(json.dumps({
+					"event": "_click_element_node_highlight_start",
+					"click_attempt_id": click_attempt_id,
+					"highlight_index": element_node.highlight_index,
+					"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+				}))
 				logger.debug(f"Highlighting element before click, index: {element_node.highlight_index}")
 				await self._update_state(focus_element=element_node.highlight_index)
+				highlight_duration = time.time() - highlight_start
+				
+				logger.info(json.dumps({
+					"event": "_click_element_node_highlight_complete",
+					"click_attempt_id": click_attempt_id,
+					"highlight_index": element_node.highlight_index,
+					"duration_ms": round(highlight_duration * 1000, 1),
+					"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+				}))
 
+			locate_start = time.time()
 			element_handle = await self.get_locate_element(element_node)
-			logger.debug(f"Located element handle: {element_handle}")
+			locate_duration = time.time() - locate_start
+			
+			logger.info(json.dumps({
+				"event": "_click_element_node_locate_complete",
+				"click_attempt_id": click_attempt_id,
+				"element_found": element_handle is not None,
+				"duration_ms": round(locate_duration * 1000, 1),
+				"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+			}))
 
 			if element_handle is None:
+				total_duration = time.time() - click_node_start
+				logger.error(json.dumps({
+					"event": "_click_element_node_element_not_found",
+					"click_attempt_id": click_attempt_id,
+					"total_duration_ms": round(total_duration * 1000, 1)
+				}))
 				raise Exception(f'Element: {repr(element_node)} not found')
 
 			click_method_attempts = 0  # Track how many different click methods we try
@@ -1081,32 +1351,99 @@ class BrowserContext:
 				"""Performs the actual click, handling both download and navigation scenarios."""
 				nonlocal click_method_attempts
 				click_method_attempts += 1
-				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Attempting click method #{click_method_attempts}")
+				perform_click_start = time.time()
+				
+				logger.info(json.dumps({
+					"event": "_click_element_node_perform_click_start",
+					"click_attempt_id": click_attempt_id,
+					"method_attempt": click_method_attempts,
+					"has_download_path": bool(self.config.save_downloads_path),
+					"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+				}))
+				
 				if self.config.save_downloads_path:
 					logger.debug("Attempting download-aware click...")
 					try:
 						# Try short-timeout expect_download to detect a file download has been been triggered
+						download_setup_start = time.time()
 						async with page.expect_download(timeout=5000) as download_info:
+							download_setup_duration = time.time() - download_setup_start
+							click_start = time.time()
 							await click_func()
+							click_duration = time.time() - click_start
+							logger.info(json.dumps({
+								"event": "click_function_complete",
+								"click_attempt_id": click_attempt_id,
+								"click_type": "download_aware",
+								"download_setup_ms": round(download_setup_duration * 1000, 1),
+								"duration_ms": round(click_duration * 1000, 1),
+								"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+							}))
+						
+						download_process_start = time.time()
 						download = await download_info.value
 						# If the download succeeds, save to disk
 						download_path = os.path.join(self.config.save_downloads_path, download.suggested_filename)
 						await download.save_as(download_path)
-						logger.debug(f'Download triggered. Saved file to: {download_path}')
+						download_process_duration = time.time() - download_process_start
+						
+						logger.info(json.dumps({
+							"event": "_click_element_node_download_complete",
+							"click_attempt_id": click_attempt_id,
+							"download_path": download_path,
+							"download_process_ms": round(download_process_duration * 1000, 1),
+							"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+						}))
 						return download_path
 					except TimeoutError:
 						# If no download is triggered, treat as normal click
-						logger.debug('No download triggered within timeout. Checking navigation...')
+						timeout_duration = time.time() - perform_click_start
+						logger.info(json.dumps({
+							"event": "_click_element_node_download_timeout",
+							"click_attempt_id": click_attempt_id,
+							"timeout_duration_ms": round(timeout_duration * 1000, 1),
+							"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+						}))
+						
+						load_state_start = time.time()
 						await page.wait_for_load_state()
+						load_state_duration = time.time() - load_state_start
+						
+						navigation_start = time.time()
 						await self._check_and_handle_navigation(page)
+						navigation_duration = time.time() - navigation_start
+						
+						logger.info(json.dumps({
+							"event": "_click_element_node_post_click_complete",
+							"click_attempt_id": click_attempt_id,
+							"load_state_ms": round(load_state_duration * 1000, 1),
+							"navigation_check_ms": round(navigation_duration * 1000, 1),
+							"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+						}))
 				else:
 					# Standard click logic if no download is expected
-					logger.debug('Performing standard click...')
 					try:
+						click_start = time.time()
 						await click_func()
+						click_duration = time.time() - click_start
+						logger.info(json.dumps({
+							"event": "click_function_complete",
+							"click_attempt_id": click_attempt_id,
+							"click_type": "standard",
+							"duration_ms": round(click_duration * 1000, 1),
+							"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+						}))
 					except Exception as e:
-						logger.debug(f"Standard click failed: {e}, trying XPath evaluation...")
+						fallback_start = time.time()
+						logger.info(json.dumps({
+							"event": "_click_element_node_fallback_start",
+							"click_attempt_id": click_attempt_id,
+							"primary_error": str(e),
+							"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+						}))
+						
 						# Fall back to XPath evaluation approach that worked in Chrome
+						xpath_eval_start = time.time()
 						result = await page.evaluate(f"""
 							(() => {{
 								const elements = document.evaluate(
@@ -1124,35 +1461,110 @@ class BrowserContext:
 								return false;
 							}})()
 						""")
+						xpath_eval_duration = time.time() - xpath_eval_start
+						
+						logger.info(json.dumps({
+							"event": "_click_element_node_xpath_fallback_complete",
+							"click_attempt_id": click_attempt_id,
+							"xpath_result": result,
+							"xpath_eval_ms": round(xpath_eval_duration * 1000, 1),
+							"fallback_total_ms": round((time.time() - fallback_start) * 1000, 1),
+							"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+						}))
+						
 						if not result:
 							raise Exception("Element found but click failed")
+					
+					load_state_start = time.time()
 					await page.wait_for_load_state()
+					load_state_duration = time.time() - load_state_start
+					
+					navigation_start = time.time()
 					await self._check_and_handle_navigation(page)
+					navigation_duration = time.time() - navigation_start
+					
+					logger.info(json.dumps({
+						"event": "_click_element_node_post_click_complete",
+						"click_attempt_id": click_attempt_id,
+						"load_state_ms": round(load_state_duration * 1000, 1),
+						"navigation_check_ms": round(navigation_duration * 1000, 1),
+						"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+					}))
+				
+				perform_click_total = time.time() - perform_click_start
+				logger.info(json.dumps({
+					"event": "_click_element_node_perform_click_complete",
+					"click_attempt_id": click_attempt_id,
+					"method_attempt": click_method_attempts,
+					"duration_ms": round(perform_click_total * 1000, 1),
+					"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+				}))
 
 			try:
-				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Trying primary click method (element_handle.click)")
+				primary_click_start = time.time()
+				logger.info(json.dumps({
+					"event": "_click_element_node_primary_click_start",
+					"click_attempt_id": click_attempt_id,
+					"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
+				}))
+				
 				result = await perform_click(lambda: element_handle.click(timeout=1500))
-				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Primary click method succeeded")
+				primary_click_duration = time.time() - primary_click_start
+				total_duration = time.time() - click_node_start
+				
+				logger.info(json.dumps({
+					"event": "_click_element_node_success",
+					"click_attempt_id": click_attempt_id,
+					"primary_click_ms": round(primary_click_duration * 1000, 1),
+					"total_duration_ms": round(total_duration * 1000, 1),
+					"has_download": result is not None
+				}))
 				return result
 			except URLNotAllowedError as e:
+				total_duration = time.time() - click_node_start
+				logger.error(json.dumps({
+					"event": "_click_element_node_url_not_allowed",
+					"click_attempt_id": click_attempt_id,
+					"error": str(e),
+					"total_duration_ms": round(total_duration * 1000, 1)
+				}))
 				raise e
 			except Exception as e:
-				logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Primary click method failed: {str(e)}")
-				# bitboard - this is creating false-negative double clicks, screwing up UI state.
-				# logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Trying fallback click method (JavaScript click)")
-				# try:
-				# 	result = await perform_click(lambda: page.evaluate('(el) => el.click()', element_handle))
-				# 	logger.info(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Fallback click method succeeded")
-				# 	return result
-				# except URLNotAllowedError as e:
-				# 	raise e
-				# except Exception as e2:
-				# 	logger.error(f"🎯 [CLICK_TRACKING] {click_attempt_id} - Both click methods failed. Primary: {str(e)}, Fallback: {str(e2)}")
-				# 	raise Exception(f'Failed to click element: {str(e2)}')
+				primary_click_duration = time.time() - click_node_start
+				logger.info(json.dumps({
+					"event": "_click_element_node_primary_failed",
+					"click_attempt_id": click_attempt_id,
+					"error": str(e),
+					"primary_click_ms": round(primary_click_duration * 1000, 1)
+				}))
+				
+				# Re-raise the exception since fallback is commented out
+				total_duration = time.time() - click_node_start
+				logger.error(json.dumps({
+					"event": "_click_element_node_failed",
+					"click_attempt_id": click_attempt_id,
+					"error": str(e),
+					"total_duration_ms": round(total_duration * 1000, 1)
+				}))
+				raise Exception(f'Failed to click element: {repr(element_node)}. Error: {str(e)}')
 
 		except URLNotAllowedError as e:
+			total_duration = time.time() - click_node_start
+			logger.error(json.dumps({
+				"event": "_click_element_node_outer_url_not_allowed",
+				"click_attempt_id": click_attempt_id,
+				"error": str(e),
+				"total_duration_ms": round(total_duration * 1000, 1)
+			}))
 			raise e
 		except Exception as e:
+			total_duration = time.time() - click_node_start
+			logger.error(json.dumps({
+				"event": "_click_element_node_outer_failed",
+				"click_attempt_id": click_attempt_id,
+				"error": str(e),
+				"total_duration_ms": round(total_duration * 1000, 1)
+			}))
 			raise Exception(f'Failed to click element: {repr(element_node)}. Error: {str(e)}')
 
 	async def get_tabs_info(self) -> list[TabInfo]:
