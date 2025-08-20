@@ -353,7 +353,7 @@ class Agent:
 			state = await self.browser_context.get_state()
 			get_state_duration = time.time() - get_state_start
 			logger.info(json.dumps({
-				"event": "get_state_complete",
+				"event": "get_top_level_action_state_complete",
 				"step": self.n_steps,
 				"agent_id": self.agent_id,
 				"duration_ms": round(get_state_duration * 1000, 1),
@@ -442,13 +442,26 @@ class Agent:
 			# Calculate total step duration and log comprehensive timing summary
 			total_step_duration = time.time() - step_start_time
 			overhead_duration = total_step_duration - get_state_duration - llm_call_duration - actions_duration
+			# Extract action names for actions_taken field using the same pattern as controller
+			actions_taken = []
+			if model_output and model_output.action:
+				for action in model_output.action:
+					# Extract actual action name from the action model (same as controller)
+					action_name = None
+					for name, params in action.model_dump(exclude_unset=True).items():
+						if params is not None:
+							action_name = name
+							break
+					if action_name:
+						actions_taken.append(action_name)
+			
 			logger.info(json.dumps({
 				"event": "step_complete",
 				"step": self.n_steps,
 				"agent_id": self.agent_id,
 				"timing": {
 					"total_ms": round(total_step_duration * 1000, 1),
-					"get_state_ms": round(get_state_duration * 1000, 1),
+					"get_top_level_action_state_ms": round(get_state_duration * 1000, 1),
 					"llm_call_ms": round(llm_call_duration * 1000, 1),
 					"actions_ms": round(actions_duration * 1000, 1),
 					"overhead_ms": round(overhead_duration * 1000, 1)
@@ -456,6 +469,7 @@ class Agent:
 				"success": len([r for r in result if not r.error]) > 0 if result else False,
 				"error_count": len([r for r in result if r.error]) if result else 0,
 				"action_count": len(model_output.action) if model_output else 0,
+				"actions_taken": actions_taken,
 				"consecutive_failures": self.consecutive_failures
 			}))
 			

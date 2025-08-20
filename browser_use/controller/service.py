@@ -1684,18 +1684,21 @@ class Controller:
 
 		check_break_if_paused()
 
-		remove_highlights_start = time.time()
-		await browser_context.remove_highlights()
-		remove_highlights_duration = time.time() - remove_highlights_start
+		# remove_highlights_start = time.time()
+		# await browser_context.remove_highlights()
+		# remove_highlights_duration = time.time() - remove_highlights_start
 		
-		logger.info(json.dumps({
-			"event": "remove_highlights_complete",
-			"duration_ms": round(remove_highlights_duration * 1000, 1)
-		}))
+		# logger.info(json.dumps({
+		# 	"event": "remove_highlights_complete",
+		# 	"duration_ms": round(remove_highlights_duration * 1000, 1)
+		# }))
 
 		for i, action in enumerate(actions):
 			check_break_if_paused()
 
+			# ambar - several steps are only one action long. we should be able to guarantee fresh state at this point.
+			# however, we seem to be doing better when we allow state updates on the zeroth action, similar to pre-action updates.
+			# so that's the same difference -- we need to be able to NOT update state on the zeroth action.
 			if action.get_index() is not None and i != 0:
 				get_state_start = time.time()
 				new_state = await browser_context.get_state()
@@ -1748,14 +1751,13 @@ class Controller:
 		total_multi_act_duration = time.time() - multi_act_start_time
 		total_action_time = sum(individual_action_durations)
 		total_get_state_time = sum(get_state_durations)
-		overhead_time = total_multi_act_duration - session_setup_duration - remove_highlights_duration - total_action_time - total_get_state_time
+		overhead_time = total_multi_act_duration - session_setup_duration - total_action_time - total_get_state_time
 		
 		logger.info(json.dumps({
 			"event": "multi_act_complete",
 			"timing": {
 				"total_ms": round(total_multi_act_duration * 1000, 1),
 				"session_setup_ms": round(session_setup_duration * 1000, 1),
-				"remove_highlights_ms": round(remove_highlights_duration * 1000, 1),
 				"total_actions_ms": round(total_action_time * 1000, 1),
 				"total_get_state_ms": round(total_get_state_time * 1000, 1),
 				"overhead_ms": round(overhead_time * 1000, 1)

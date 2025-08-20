@@ -746,7 +746,7 @@ class BrowserContext:
 			if pages:
 				session.current_page = pages[-1]
 				page = session.current_page
-				page_title = await page.title()
+				page_title = "Test title" # await page.title() # ambar - this can become expensive if pages are busy, and this then holds up clicks.
 				page_recovery_duration = time.time() - page_recovery_start
 				
 				logger.info(json.dumps({
@@ -824,16 +824,17 @@ class BrowserContext:
 			}))
 			
 			# Get scroll info
-			scroll_info_start = time.time()
-			pixels_above, pixels_below = await self.get_scroll_info(page)
-			scroll_info_duration = time.time() - scroll_info_start
+			# ambar - queue this for removal in the athena flow.
+			# scroll_info_start = time.time()
+			# pixels_above, pixels_below = await self.get_scroll_info(page)
+			# scroll_info_duration = time.time() - scroll_info_start
 			
-			logger.info(json.dumps({
-				"event": "_update_state_scroll_info_complete",
-				"duration_ms": round(scroll_info_duration * 1000, 1),
-				"pixels_above": pixels_above,
-				"pixels_below": pixels_below
-			}))
+			# logger.info(json.dumps({
+			# 	"event": "_update_state_scroll_info_complete",
+			# 	"duration_ms": round(scroll_info_duration * 1000, 1),
+			# 	"pixels_above": pixels_above,
+			# 	"pixels_below": pixels_below
+			# }))
 
 			# Get tabs info
 			tabs_info_start = time.time()
@@ -846,11 +847,13 @@ class BrowserContext:
 				"tab_count": len(tabs)
 			}))
 
-			# Create browser state
-			state_creation_start = time.time()
+			# Get page title
+			title_start = time.time()
 			page_title = await page.title()
-			state_creation_title_duration = time.time() - state_creation_start
+			title_duration = time.time() - title_start
 			
+			# Create browser state object
+			browser_state_creation_start = time.time()
 			self.current_state = BrowserState(
 				element_tree=content.element_tree,
 				selector_map=content.selector_map,
@@ -858,10 +861,13 @@ class BrowserContext:
 				title=page_title,
 				tabs=tabs,
 				screenshot=screenshot_b64,
-				pixels_above=pixels_above,
-				pixels_below=pixels_below,
+				pixels_above=10, # pixels_above,
+				pixels_below=10, # pixels_below,
 			)
-			state_creation_duration = time.time() - state_creation_start
+			browser_state_creation_duration = time.time() - browser_state_creation_start
+			
+			# Total state creation time (title + object creation)
+			state_creation_duration = title_duration + browser_state_creation_duration
 			
 			total_duration = time.time() - update_state_start
 			logger.info(json.dumps({
@@ -873,8 +879,10 @@ class BrowserContext:
 					"dom_service_init_ms": round(dom_service_init_duration * 1000, 1),
 					"clickable_elements_ms": round(clickable_elements_duration * 1000, 1),
 					"screenshot_ms": round(screenshot_duration * 1000, 1),
-					"scroll_info_ms": round(scroll_info_duration * 1000, 1),
+					# "scroll_info_ms": round(scroll_info_duration * 1000, 1),
 					"tabs_info_ms": round(tabs_info_duration * 1000, 1),
+					"title_retrieval_ms": round(title_duration * 1000, 1),
+					"browser_state_creation_ms": round(browser_state_creation_duration * 1000, 1),
 					"state_creation_ms": round(state_creation_duration * 1000, 1)
 				},
 				"state_stats": {
@@ -914,8 +922,8 @@ class BrowserContext:
 		page = await self.get_current_page()
 		# ambar - this where screenshot management happens.
 		# Return a minimal blank screenshot for testing/development
-		# blank_pixel = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
-		# return base64.b64encode(blank_pixel).decode('utf-8')
+		blank_pixel = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+		return base64.b64encode(blank_pixel).decode('utf-8')
 
 		start_time = time.time()
 		screenshot = await page.screenshot(
@@ -1248,7 +1256,80 @@ class BrowserContext:
 			logger.error(f"Failed to locate element: {e}")
 			return None
 
+	async def _ensure_element_locatable(self, element_node: DOMElementNode):
+		"""Minimal function to focus target element and remove highlights from others"""
+		if element_node.highlight_index is None:
+			return
+			
+		try:
+			page = await self.get_current_page()
+			
+			# Use XPath or other selector to find the element and add the locator attribute
+			xpath = element_node.xpath
+			if xpath:
+				await page.evaluate(f"""
+					// First, remove all existing highlights
+					const container = document.getElementById('playwright-highlight-container');
+					if (container) {{
+						container.remove();
+					}}
+					
+					// Find target element by XPath and add locator attribute
+					const xpath = `{xpath}`;
+					const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+					const targetElement = result.singleNodeValue;
+					if (targetElement) {{
+						// Add locator attribute for reliable location
+						targetElement.setAttribute('browser-user-highlight-id', 'playwright-highlight-{element_node.highlight_index}');
+						
+						// Create focused highlight for just this element
+						const container = document.createElement('div');
+						container.id = 'playwright-highlight-container';
+						container.style.position = 'absolute';
+						container.style.pointerEvents = 'none';
+						container.style.top = '0';
+						container.style.left = '0';
+						container.style.width = '100%';
+						container.style.height = '100%';
+						container.style.zIndex = '2147483647';
+						document.body.appendChild(container);
+						
+						// Create focused highlight overlay
+						const rect = targetElement.getBoundingClientRect();
+						const overlay = document.createElement('div');
+						overlay.style.position = 'absolute';
+						overlay.style.border = '3px solid #FF0000';
+						overlay.style.backgroundColor = '#FF000033';
+						overlay.style.pointerEvents = 'none';
+						overlay.style.boxSizing = 'border-box';
+						overlay.style.top = `${{rect.top + window.scrollY}}px`;
+						overlay.style.left = `${{rect.left + window.scrollX}}px`;
+						overlay.style.width = `${{rect.width}}px`;
+						overlay.style.height = `${{rect.height}}px`;
+						
+						// Create focused label
+						const label = document.createElement('div');
+						label.style.position = 'absolute';
+						label.style.background = '#FF0000';
+						label.style.color = 'white';
+						label.style.padding = '2px 6px';
+						label.style.borderRadius = '4px';
+						label.style.fontSize = '12px';
+						label.style.fontWeight = 'bold';
+						label.textContent = 'FOCUS';
+						label.style.top = `${{rect.top + window.scrollY - 20}}px`;
+						label.style.left = `${{rect.left + window.scrollX}}px`;
+						
+						container.appendChild(overlay);
+						container.appendChild(label);
+					}}
+				""")
+		except Exception as e:
+			# If this fails, we'll fall back to normal element location methods
+			logger.warning(f"Failed to ensure element locatable: {e}")
+
 	async def _input_text_element_node(self, element_node: DOMElementNode, text: str):
+		input_start = time.time()
 		try:
 			# Highlight before typing
 			if element_node.highlight_index is not None:
@@ -1257,7 +1338,11 @@ class BrowserContext:
 					"event": "_input_text_element_node_highlight_start",
 					"highlight_index": element_node.highlight_index
 				}))
-				await self._update_state(focus_element=element_node.highlight_index)
+				# OLD IMPLEMENTATION (full state rebuild, slow but comprehensive):
+				# await self._update_state(focus_element=element_node.highlight_index)
+				
+				# NEW IMPLEMENTATION (minimal focused highlighting, fast):
+				await self._ensure_element_locatable(element_node)
 				highlight_duration = time.time() - highlight_start
 				
 				logger.info(json.dumps({
@@ -1266,18 +1351,59 @@ class BrowserContext:
 					"duration_ms": round(highlight_duration * 1000, 1)
 				}))
 
+			# Get page and locate element
+			page_start = time.time()
 			page = await self.get_current_page()
+			page_duration = time.time() - page_start
+			
+			locate_start = time.time()
 			element_handle = await self.get_locate_element(element_node)
+			locate_duration = time.time() - locate_start
 
 			if element_handle is None:
 				raise Exception(f'Element: {repr(element_node)} not found')
 
+			# Scroll element into view
+			scroll_start = time.time()
 			await element_handle.scroll_into_view_if_needed(timeout=2500)
+			scroll_duration = time.time() - scroll_start
+			
+			# Clear and type text
+			clear_start = time.time()
 			await element_handle.fill('')
+			clear_duration = time.time() - clear_start
+			
+			type_start = time.time()
 			await element_handle.type(text)
+			type_duration = time.time() - type_start
+			
+			# Wait for page to stabilize
+			load_start = time.time()
 			await page.wait_for_load_state()
+			load_duration = time.time() - load_start
+			
+			total_duration = time.time() - input_start
+			logger.info(json.dumps({
+				"event": "_input_text_element_node_complete",
+				"total_duration_ms": round(total_duration * 1000, 1),
+				"text_length": len(text),
+				"timing_breakdown": {
+					"page_get_ms": round(page_duration * 1000, 1),
+					"locate_element_ms": round(locate_duration * 1000, 1),
+					"scroll_into_view_ms": round(scroll_duration * 1000, 1),
+					"clear_field_ms": round(clear_duration * 1000, 1),
+					"type_text_ms": round(type_duration * 1000, 1),
+					"wait_load_ms": round(load_duration * 1000, 1)
+				}
+			}))
 
 		except Exception as e:
+			total_duration = time.time() - input_start
+			logger.error(json.dumps({
+				"event": "_input_text_element_node_failed",
+				"total_duration_ms": round(total_duration * 1000, 1),
+				"error": str(e)
+			}))
 			raise Exception(f'Failed to input text into element: {repr(element_node)}. Error: {str(e)}')
 
 	async def _click_element_node(self, element_node: DOMElementNode, click_attempt_id: str = None) -> Optional[str]:
@@ -1312,8 +1438,12 @@ class BrowserContext:
 					"highlight_index": element_node.highlight_index,
 					"total_duration_ms": round((time.time() - click_node_start) * 1000, 1)
 				}))
-				logger.debug(f"Highlighting element before click, index: {element_node.highlight_index}")
-				await self._update_state(focus_element=element_node.highlight_index)
+				# logger.debug(f"Highlighting element before click, index: {element_node.highlight_index}")
+				# OLD IMPLEMENTATION (full state rebuild, slow but comprehensive):
+				# await self._update_state(focus_element=element_node.highlight_index)
+				
+				# NEW IMPLEMENTATION (minimal focused highlighting, fast):
+				await self._ensure_element_locatable(element_node)
 				highlight_duration = time.time() - highlight_start
 				
 				logger.info(json.dumps({
@@ -1572,8 +1702,10 @@ class BrowserContext:
 		session = await self.get_session()
 
 		tabs_info = []
+		# ambar - get tabs info can take several seconds if tabs are active.
+		# the added await calls are expsensive and we can likely manage with URLs alone.
 		for page_id, page in enumerate(session.context.pages):
-			tab_info = TabInfo(page_id=page_id, url=page.url, title=await page.title())
+			tab_info = TabInfo(page_id=page_id, url=page.url, title="Placeholder title")
 			tabs_info.append(tab_info)
 
 		return tabs_info

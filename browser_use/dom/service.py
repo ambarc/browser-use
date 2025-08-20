@@ -35,13 +35,60 @@ class DomService:
 		focus_element: int = -1,
 		viewport_expansion: int = 1,
 	) -> DOMState:
-		# logger.debug(f"Getting clickable elements. highlight={highlight_elements}, focus={focus_element}")
+		get_clickable_start = time.time()
+		
+		logger.info(json.dumps({
+			"event": "get_clickable_elements_start",
+			"highlight_elements": highlight_elements,
+			"focus_element": focus_element,
+			"viewport_expansion": viewport_expansion
+		}))
+		
+		# Build DOM tree
+		build_tree_start = time.time()
 		element_tree = await self._build_dom_tree(highlight_elements, focus_element, viewport_expansion)
-		# logger.debug(f"DOM tree built with {self._count_elements(element_tree)} nodes")
+		build_tree_duration = time.time() - build_tree_start
+		element_count = self._count_elements(element_tree)
+		
+		logger.info(json.dumps({
+			"event": "get_clickable_elements_dom_tree_complete",
+			"duration_ms": round(build_tree_duration * 1000, 1),
+			"element_count": element_count
+		}))
+		
+		# Create selector map
+		selector_map_start = time.time()
 		selector_map = self._create_selector_map(element_tree)
-		# logger.debug(f"Selector map created with {len(selector_map)} elements")
+		selector_map_duration = time.time() - selector_map_start
+		
+		logger.info(json.dumps({
+			"event": "get_clickable_elements_selector_map_complete",
+			"duration_ms": round(selector_map_duration * 1000, 1),
+			"selector_count": len(selector_map)
+		}))
+		
+		# Create final state
+		state_creation_start = time.time()
+		dom_state = DOMState(element_tree=element_tree, selector_map=selector_map)
+		state_creation_duration = time.time() - state_creation_start
+		
+		total_duration = time.time() - get_clickable_start
+		logger.info(json.dumps({
+			"event": "get_clickable_elements_complete",
+			"total_duration_ms": round(total_duration * 1000, 1),
+			"timing_breakdown": {
+				"build_tree_ms": round(build_tree_duration * 1000, 1),
+				"selector_map_ms": round(selector_map_duration * 1000, 1),
+				"state_creation_ms": round(state_creation_duration * 1000, 1)
+			},
+			"stats": {
+				"element_count": element_count,
+				"selector_count": len(selector_map),
+				"highlight_enabled": highlight_elements
+			}
+		}))
 
-		return DOMState(element_tree=element_tree, selector_map=selector_map)
+		return dom_state
 
 	def _count_elements(self, node: DOMBaseNode) -> int:
 		"""Count elements for debugging"""
@@ -56,8 +103,17 @@ class DomService:
 		viewport_expansion: int,
 	) -> DOMElementNode:
 		start_time = time.time()
+		
+		# Read JavaScript code
+		js_read_start = time.time()
 		js_code = resources.read_text('browser_use.dom', 'buildDomTree-top.js')
-		# logger.debug(f"Executing buildDomTree.js with highlight={highlight_elements}, focus={focus_element}")
+		js_read_duration = time.time() - js_read_start
+		
+		logger.info(json.dumps({
+			"event": "build_dom_tree_js_loaded",
+			"duration_ms": round(js_read_duration * 1000, 1),
+			"js_size_chars": len(js_code)
+		}))
 
 		args = {
 			'doHighlightElements': highlight_elements,
@@ -65,14 +121,31 @@ class DomService:
 			'viewportExpansion': viewport_expansion,
 		}
 
-		# original implementation.
-		# eval_page = await self.page.evaluate(js_code, args)
-		
-		# json implementation.
+		# Execute JavaScript in browser
+		js_execute_start = time.time()
+		# ambar - this ranges from 2-6s on ERPs, and gets called a lot. 
+		# not re-evaluting this also leads to clicks and inputs failing because of elements that couldn't be located. 
+		# we'd be fine if we could skip the extra evaluation while still being able to locate elements.
 		eval_page = json.loads(await self.page.evaluate(js_code, args))
-		logger.debug(f"DOM tree data received, size: {len(str(eval_page))} characters")
+		js_execute_duration = time.time() - js_execute_start
+		data_size = len(str(eval_page))
 		
+		logger.info(json.dumps({
+			"event": "build_dom_tree_js_executed",
+			"duration_ms": round(js_execute_duration * 1000, 1),
+			"data_size_chars": data_size,
+			"data_size_mb": round(data_size / (1024 * 1024), 2)
+		}))
+		
+		# Parse the DOM data
+		parse_start = time.time()
 		html_to_dict = self._parse_node(eval_page)
+		parse_duration = time.time() - parse_start
+		
+		logger.info(json.dumps({
+			"event": "build_dom_tree_parsed",
+			"duration_ms": round(parse_duration * 1000, 1)
+		}))
 
 		if html_to_dict is None or not isinstance(html_to_dict, DOMElementNode):
 			logger.error("Failed to parse HTML to dictionary")
@@ -81,9 +154,14 @@ class DomService:
 		build_duration = time.time() - start_time
 		logger.info(json.dumps({
 			"event": "build_dom_tree_complete",
-			"duration_seconds": round(build_duration, 2),
-			"duration_ms": round(build_duration * 1000, 1),
-			"data_size_chars": len(str(eval_page))
+			"total_duration_ms": round(build_duration * 1000, 1),
+			"timing_breakdown": {
+				"js_read_ms": round(js_read_duration * 1000, 1),
+				"js_execute_ms": round(js_execute_duration * 1000, 1),
+				"parse_ms": round(parse_duration * 1000, 1)
+			},
+			"data_size_chars": data_size,
+			"data_size_mb": round(data_size / (1024 * 1024), 2)
 		}))
 		return html_to_dict
 
